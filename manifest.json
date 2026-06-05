@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "82-0 Solver",
+  "version": "0.1.0",
+  "description": "Minimal EV helper for the 82-0.com simulator.",
+  "permissions": [
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://82-0.com/*",
+    "https://www.82-0.com/*"
+  ],
+  "action": {
+    "default_title": "82-0 Solver"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://82-0.com/*",
+        "https://www.82-0.com/*"
+      ],
+      "js": ["solver-core.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "data/players.json",
+        "data/precomputed-depth2-standard-82.json",
+        "solver-core.js",
+        "ev-worker.js",
+        "fixed-spins.js",
+        "roll-listener.js"
+      ],
+      "matches": [
+        "https://82-0.com/*",
+        "https://www.82-0.com/*"
+      ]
+    }
+  ]
+}
