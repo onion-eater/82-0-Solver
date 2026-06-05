@@ -133,6 +133,9 @@ Runtime solving depends on filled roster size:
 - `3-4` filled slots: use exact bitmask-style DP for the remaining picks
 - `5` filled slots: score the terminal roster directly
 
+For late-game states, the overlay first shows a greedy estimate and then keeps
+updating the state count while exact search runs.
+
 The worker reports both max-score and 82-0 recommendations. These can differ,
 so the overlay displays both.
 

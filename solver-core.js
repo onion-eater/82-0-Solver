@@ -2,6 +2,7 @@
   "use strict";
 
   const ALL_POSITIONS = ["PG", "SG", "SF", "PF", "C"];
+  const POSITION_BITS = { PG: 1, SG: 2, SF: 4, PF: 8, C: 16 };
   const STATS = ["ppg", "rpg", "apg", "spg", "bpg"];
 
   const ERA_BASELINES = {
@@ -42,7 +43,9 @@
   const EIGHTY_TWO_ZERO_TEAM_OVR = 110;
   const LIVE_ERAS = ["1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"];
   const LIVE_ERA_SET = new Set(LIVE_ERAS);
-  const STATE_PROGRESS_INTERVAL_MS = 2500;
+  const STATE_PROGRESS_INTERVAL_MS = 1000;
+  const ADDITION_CACHE_LIMIT = 20000;
+  const EXACT_MEMO_LIMIT = 50000;
   const ROUGH_COMBO_PLAYER_LIMIT = 8;
   const ROUGH_TAIL_ROLLOUTS = 4;
   const GREEDY_ROOT_ACTION_LIMIT = 8;
@@ -251,7 +254,10 @@
     if (cacheKey && cache.has(cacheKey)) return cache.get(cacheKey);
     const used = usedBaseSlugs(roster, playersById);
     if (used.has(player.baseSlug || player.player.toLowerCase())) {
-      if (cacheKey) cache.set(cacheKey, []);
+      if (cacheKey) {
+        if (cache.size >= ADDITION_CACHE_LIMIT) cache.clear();
+        cache.set(cacheKey, []);
+      }
       return [];
     }
     const currentPlayers = rosterListFromIds(roster, playersById);
@@ -284,7 +290,10 @@
       const addition = bestByPosition.get(pos);
       if (addition) additions.push(addition);
     }
-    if (cacheKey) cache.set(cacheKey, additions);
+    if (cacheKey) {
+      if (cache.size >= ADDITION_CACHE_LIMIT) cache.clear();
+      cache.set(cacheKey, additions);
+    }
     return additions;
   }
 
@@ -294,6 +303,57 @@
 
   function canAddPlayerToRoster(roster, player, playersById) {
     return rosterAdditions(roster, player, playersById).length > 0;
+  }
+
+  function playerPositionMask(player) {
+    let mask = 0;
+    for (const pos of player?.positions || [player?.pos]) mask |= POSITION_BITS[pos] || 0;
+    return mask;
+  }
+
+  function canAssignPositionMasks(masks) {
+    let usedMaskStates = 1;
+    for (const mask of masks) {
+      let next = 0;
+      for (let used = 0; used < 32; used += 1) {
+        if ((usedMaskStates & (1 << used)) === 0) continue;
+        for (let bit = 1; bit <= 16; bit <<= 1) {
+          if ((mask & bit) && (used & bit) === 0) next |= 1 << (used | bit);
+        }
+      }
+      usedMaskStates = next;
+      if (usedMaskStates === 0) return false;
+    }
+    return usedMaskStates !== 0;
+  }
+
+  function canAddPlayerByPositionMask(roster, player, playersById, cache = null) {
+    const cacheKey = cache
+      ? `${player.id}|${ALL_POSITIONS.map((pos) => roster?.[pos] || "").join("|")}`
+      : "";
+    if (cacheKey && cache.has(cacheKey)) return cache.get(cacheKey);
+
+    const base = player.baseSlug || player.player.toLowerCase();
+    const masks = [];
+    for (const pos of ALL_POSITIONS) {
+      const current = roster?.[pos] ? playersById.get(roster[pos]) : null;
+      if (!current) continue;
+      if ((current.baseSlug || current.player.toLowerCase()) === base) {
+        if (cacheKey) {
+          if (cache.size >= ADDITION_CACHE_LIMIT) cache.clear();
+          cache.set(cacheKey, false);
+        }
+        return false;
+      }
+      masks.push(playerPositionMask(current));
+    }
+    masks.push(playerPositionMask(player));
+    const ok = canAssignPositionMasks(masks);
+    if (cacheKey) {
+      if (cache.size >= ADDITION_CACHE_LIMIT) cache.clear();
+      cache.set(cacheKey, ok);
+    }
+    return ok;
   }
 
   function indexPlayers(players) {
@@ -375,6 +435,11 @@
 
   function nowMs() {
     return Date.now();
+  }
+
+  function setLimitedMemo(map, key, value, limit = EXACT_MEMO_LIMIT) {
+    if (map.size >= limit) map.clear();
+    map.set(key, value);
   }
 
   function hasLiveCombo(ctx, team, era) {
@@ -855,8 +920,44 @@
       const expectedOneOpenMemo = new Map();
       const twoOpenMemo = new Map();
       const statMemo = new Map();
+      const terminalAddCache = new Map();
       let statesVisited = 0;
       let stuckStates = 0;
+      let lastProgressScored = null;
+      let lastProgressApproximate = true;
+      let lastProgressHeuristic = false;
+      let lastProgressGreedy = false;
+      let lastProgressMs = startedAt;
+
+      function emitLateProgress(scored, details) {
+        if (!onProgress || scored.length === 0) return;
+        lastProgressScored = scored;
+        lastProgressApproximate = details.approximate !== false;
+        lastProgressHeuristic = !!details.heuristic;
+        lastProgressGreedy = !!details.greedy;
+        lastProgressMs = nowMs();
+        emitProgress(goal, scored, {
+          statesVisited,
+          memoSize: oneOpenMemo.size + expectedOneOpenMemo.size + twoOpenMemo.size,
+          stuckStates,
+          ...details
+        });
+      }
+
+      function emitLateStateProgress() {
+        if (!onProgress || !lastProgressScored) return;
+        const currentMs = nowMs();
+        if (currentMs - lastProgressMs < STATE_PROGRESS_INTERVAL_MS) return;
+        lastProgressMs = currentMs;
+        emitProgress(goal, lastProgressScored, {
+          statesVisited,
+          memoSize: oneOpenMemo.size + expectedOneOpenMemo.size + twoOpenMemo.size,
+          approximate: lastProgressApproximate,
+          heuristic: lastProgressHeuristic,
+          greedy: lastProgressGreedy,
+          stuckStates
+        });
+      }
 
       function statSummary(roster) {
         const key = rosterMemoKey(roster);
@@ -877,7 +978,7 @@
             summary.bpgCount += 1;
           }
         }
-        statMemo.set(key, summary);
+        setLimitedMemo(statMemo, key, summary);
         return summary;
       }
 
@@ -909,7 +1010,7 @@
         if (open.length !== 1) return null;
         const pool = ctx.playersByCombo.get(`${team}|${era}`) || [];
         for (const player of pool) {
-          if (rosterAdditions(roster, player, ctx.playersById, additionCache).length === 0) continue;
+          if (!canAddPlayerByPositionMask(roster, player, ctx.playersById, terminalAddCache)) continue;
           const value = standardObjectiveWithPlayer(baseStats, player);
           if (value > best) best = value;
         }
@@ -923,6 +1024,7 @@
         const key = `${goal}|${team}|${era}|${teamSwitchUsed ? 1 : 0}|${eraSwitchUsed ? 1 : 0}|${rosterMemoKey(roster)}`;
         if (oneOpenMemo.has(key)) return oneOpenMemo.get(key);
         statesVisited += 1;
+        emitLateStateProgress();
         const values = [];
         const terminal = terminalPickValue(roster, team, era);
         if (terminal !== null) values.push(terminal);
@@ -939,11 +1041,11 @@
         if (values.length === 0) {
           stuckStates += 1;
           const stuck = goal === "eightyTwoZero" ? 0 : -Infinity;
-          oneOpenMemo.set(key, stuck);
+          setLimitedMemo(oneOpenMemo, key, stuck);
           return stuck;
         }
         const best = Math.max(...values);
-        oneOpenMemo.set(key, best);
+        setLimitedMemo(oneOpenMemo, key, best);
         return best;
       }
 
@@ -970,7 +1072,7 @@
         const value = average(rollCombos.map(([team, era]) =>
           oneOpenValue(roster, team, era, teamSwitchUsed, eraSwitchUsed)
         ));
-        expectedOneOpenMemo.set(key, value);
+        setLimitedMemo(expectedOneOpenMemo, key, value);
         return value;
       }
 
@@ -979,16 +1081,17 @@
         const key = keyFor(state);
         if (twoOpenMemo.has(key)) return twoOpenMemo.get(key);
         statesVisited += 1;
+        emitLateStateProgress();
         const actions = buildActionsForState(state).actions;
         if (actions.length === 0) {
           stuckStates += 1;
           const fallback = partialObjectiveValue(rosterListFromIds(state.roster, ctx.playersById), adjusted, goal);
-          twoOpenMemo.set(key, fallback);
+          setLimitedMemo(twoOpenMemo, key, fallback);
           return fallback;
         }
         let best = -Infinity;
         for (const action of actions) best = Math.max(best, twoOpenActionValue(state, action));
-        twoOpenMemo.set(key, best);
+        setLimitedMemo(twoOpenMemo, key, best);
         return best;
       }
 
@@ -1011,11 +1114,23 @@
       }
 
       const state = normalizeState(start);
-      const actions = buildActionsForState(state).actions;
+      const greedyBuilt = buildActionsForState(state, { ...options, candidateLimit: GREEDY_ROOT_ACTION_LIMIT });
+      if (onProgress && greedyBuilt.actions.length > 0) {
+        emitLateProgress(greedyBuilt.actions.map((action) => ({
+          action,
+          value: greedyActionValue(state, action, goal),
+          label: actionLabel(action, ctx, adjusted)
+        })), {
+          approximate: true,
+          greedy: true,
+          candidateTruncated: greedyBuilt.candidateTruncated
+        });
+      }
+      const built = buildActionsForState(state);
+      const actions = built.actions;
       const open = openPositions(state.roster).length;
       const actionValue = open <= 1 ? oneOpenActionValue : twoOpenActionValue;
       const scored = [];
-      let lastProgressMs = startedAt;
       for (const action of actions) {
         scored.push({
           action,
@@ -1023,22 +1138,13 @@
           label: actionLabel(action, ctx, adjusted)
         });
         if (onProgress && nowMs() - lastProgressMs >= STATE_PROGRESS_INTERVAL_MS) {
-          lastProgressMs = nowMs();
-          emitProgress(goal, scored, {
-            statesVisited,
-            memoSize: oneOpenMemo.size + expectedOneOpenMemo.size + twoOpenMemo.size,
-            approximate: true
-          });
+          emitLateProgress(scored, { approximate: true });
         }
       }
       scored.sort((a, b) => b.value - a.value);
       const topActions = scored.slice(0, 10);
       if (onProgress && topActions.length) {
-        emitProgress(goal, topActions, {
-          statesVisited,
-          memoSize: oneOpenMemo.size + expectedOneOpenMemo.size + twoOpenMemo.size,
-          approximate: false
-        });
+        emitLateProgress(topActions, { approximate: false });
       }
       const best = topActions[0] || null;
       const impossible = best && best.value === -Infinity;
@@ -1260,6 +1366,10 @@
         maxScore: solveGreedyGoal("maxScore")
       };
     } else if (!adjusted) {
+      if (onProgress) {
+        solveGreedyGoal("eightyTwoZero");
+        solveGreedyGoal("maxScore");
+      }
       goals = {
         eightyTwoZero: solveLateExactGoal("eightyTwoZero"),
         maxScore: solveLateExactGoal("maxScore")

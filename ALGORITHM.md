@@ -120,6 +120,9 @@ Early game:
 Late game:
 
 - With `3-4` filled slots, runtime uses exact DP for the remaining picks.
+- Before exact late-game search completes, the worker emits a greedy interim
+  recommendation and then updates the searched-state count about once per
+  second.
 - It handles player movement, duplicate `baseSlug` blocking, switches, and
   self-rerolls.
 
