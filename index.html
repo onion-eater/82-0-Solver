@@ -201,9 +201,14 @@
       font-weight: 400;
     }
 
-    .help-popover[open] .help-body,
-    .help-popover:hover .help-body {
+    .help-popover[open] .help-body {
       display: block;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .help-popover:hover .help-body {
+        display: block;
+      }
     }
 
     .form-grid {
@@ -359,13 +364,41 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
-    @media (max-width: 640px) {
-      .form-grid {
-        grid-template-columns: 1fr;
+    @media (max-width: 760px) {
+      .solver-panel .form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        max-width: none;
+      }
+
+      .solver-panel .goal-field {
+        grid-column: 1 / -1;
       }
 
       .solver-panel .output {
         grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .help-body,
+      .solver-panel .goal-help .help-body {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        top: 72px;
+        width: auto;
+        max-height: calc(100vh - 96px);
+        overflow: auto;
+      }
+    }
+
+    @media (max-width: 340px) {
+      .solver-panel .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .solver-panel .goal-field {
+        grid-column: auto;
       }
     }
   </style>
@@ -384,7 +417,7 @@
       </p>
 
       <div class="form-grid">
-        <div>
+        <div class="goal-field">
           <div class="goal-heading">
             <label for="solve-goal">Goal</label>
             <details class="help-popover goal-help">
@@ -922,11 +955,15 @@
       }
     }
 
-    document.addEventListener("click", (event) => {
+    function closeHelpPopovers(event) {
       for (const details of document.querySelectorAll(".help-popover[open]")) {
         if (!details.contains(event.target)) details.removeAttribute("open");
       }
-    });
+    }
+
+    document.addEventListener("pointerdown", closeHelpPopovers);
+    document.addEventListener("click", closeHelpPopovers);
+    document.addEventListener("focusin", closeHelpPopovers);
 
     for (const button of document.querySelectorAll("[data-tab]")) {
       button.addEventListener("click", () => setActiveTab(button.dataset.tab));
