@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>82-0 Solver</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #111;
+      background: #f6f6f3;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      line-height: 1.45;
+    }
+
+    main {
+      width: min(980px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 12px 0 16px;
+    }
+
+    p {
+      margin: 0 0 14px;
+      max-width: 760px;
+    }
+
+    a {
+      color: #0645ad;
+    }
+
+    .tabs,
+    .actions,
+    .checkbox-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .tabs {
+      margin: 0;
+    }
+
+    .tab {
+      background: white;
+      color: #111;
+    }
+
+    .tab[aria-selected="true"] {
+      background: #111;
+      color: white;
+    }
+
+    .panel {
+      border: 1px solid #222;
+      background: white;
+      padding: 16px;
+      margin-top: 10px;
+      border-radius: 6px;
+    }
+
+    .panel[hidden] {
+      display: none;
+    }
+
+    .solver-panel {
+      padding: 12px;
+    }
+
+    .panel > p,
+    .intro-row p {
+      margin-bottom: 10px;
+    }
+
+    .solver-panel .form-grid {
+      gap: 8px;
+    }
+
+    .solver-panel .checkbox-row {
+      margin: 8px 0;
+    }
+
+    .solver-panel .checkbox-row label {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .solver-panel .current-players-heading {
+      display: inline-block;
+      margin-top: 2px;
+      font-size: 14px;
+      letter-spacing: 0;
+      border-bottom: 1px solid #111;
+      padding-bottom: 1px;
+    }
+
+    .solver-panel .roster-grid {
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .panel input,
+    .panel select {
+      padding: 6px 8px;
+    }
+
+    .solver-panel .output {
+      margin-top: 8px;
+      gap: 6px;
+      grid-template-columns: minmax(130px, 0.7fr) repeat(2, minmax(220px, 1fr));
+    }
+
+    .solver-panel .summary,
+    .solver-panel .goal-card {
+      padding: 8px;
+    }
+
+    .solver-panel .goal-action {
+      margin-top: 2px;
+    }
+
+    .intro-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+
+    .intro-row p {
+      flex: 1;
+    }
+
+    .help-popover {
+      flex: 0 0 auto;
+      position: relative;
+    }
+
+    .help-popover summary {
+      width: 28px;
+      height: 28px;
+      border: 1px solid #111;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      list-style: none;
+      font-weight: 700;
+      background: white;
+    }
+
+    .help-popover summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .help-body {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 34px;
+      width: min(320px, calc(100vw - 48px));
+      z-index: 5;
+      border: 1px solid #111;
+      background: white;
+      border-radius: 6px;
+      padding: 10px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+      font-size: 13px;
+      font-weight: 400;
+    }
+
+    .help-popover[open] .help-body,
+    .help-popover:hover .help-body {
+      display: block;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(160px, 1fr));
+      gap: 12px;
+      max-width: 520px;
+    }
+
+    .spin-grid,
+    .roster-grid {
+      display: grid;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .spin-grid {
+      grid-template-columns: 54px minmax(90px, 1fr) minmax(90px, 1fr);
+      max-width: 430px;
+    }
+
+    .spins-panel {
+      padding: 12px;
+    }
+
+    .spins-panel .spin-grid {
+      gap: 6px;
+    }
+
+    .spins-panel textarea {
+      min-height: 120px;
+      height: 18vh;
+      max-height: 170px;
+      margin-top: 8px;
+      font-size: 11px;
+    }
+
+    .spins-panel .actions {
+      margin-top: 8px;
+    }
+
+    .roster-grid {
+      grid-template-columns: 54px minmax(220px, 1fr);
+      max-width: 640px;
+      margin-top: 10px;
+    }
+
+    label,
+    .label {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input,
+    select,
+    textarea,
+    button {
+      font: inherit;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid #333;
+      background: white;
+      color: #111;
+      border-radius: 4px;
+      padding: 7px 8px;
+    }
+
+    input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+    }
+
+    textarea {
+      min-height: 300px;
+      margin-top: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      resize: vertical;
+    }
+
+    button {
+      border: 1px solid #111;
+      background: #111;
+      color: white;
+      border-radius: 4px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: default;
+      opacity: 0.55;
+    }
+
+    .actions {
+      margin-top: 10px;
+    }
+
+    .site-footer {
+      margin-top: 8px;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .checkbox-row {
+      margin: 12px 0;
+    }
+
+    .status,
+    .muted,
+    .goal-meta {
+      font-size: 13px;
+      color: #333;
+    }
+
+    .output {
+      margin-top: 14px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .summary,
+    .goal-card {
+      border: 1px solid #999;
+      background: #fff;
+      border-radius: 4px;
+      padding: 10px;
+    }
+
+    .summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .goal-title,
+    .goal-action {
+      font-weight: 700;
+    }
+
+    .goal-action {
+      margin-top: 4px;
+    }
+
+    ol {
+      padding-left: 22px;
+      margin: 8px 0 0;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    @media (max-width: 640px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .solver-panel .output {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="tabs" role="tablist" aria-label="Tools">
+      <button type="button" class="tab" data-tab="solver" aria-selected="true">Solver</button>
+      <button type="button" class="tab" data-tab="spins" aria-selected="false">Fix Spins</button>
+    </div>
+
+    <section class="panel solver-panel" data-panel="solver" aria-label="Solver">
+      <p class="muted">
+        Choose the current roll, mark used rerolls, enter current roster slots,
+        then solve. Leave empty roster slots blank.
+      </p>
+
+      <div class="form-grid">
+        <label>
+          Team
+          <select id="solve-team">
+            <option value="">loading...</option>
+          </select>
+        </label>
+        <label>
+          Era
+          <select id="solve-era">
+            <option value="">loading...</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="checkbox-row">
+        <label><input type="checkbox" id="team-switch-used"> team reroll used</label>
+        <label><input type="checkbox" id="era-switch-used"> era reroll used</label>
+      </div>
+
+      <div class="label current-players-heading">Current Players</div>
+      <div class="roster-grid" id="roster-grid">
+        <div class="label">Slot</div>
+        <div class="label">Player</div>
+      </div>
+      <div id="player-lists" hidden></div>
+
+      <div class="actions">
+        <button type="button" id="solve-button">Solve</button>
+        <span class="status" id="solver-status" aria-live="polite">loading data...</span>
+      </div>
+
+      <div class="output" id="solver-output" aria-live="polite"></div>
+    </section>
+
+    <section class="panel spins-panel" data-panel="spins" aria-label="Fix Spins" hidden>
+      <div class="intro-row">
+        <p class="muted">
+          Enter the five team and era rolls you want, then paste script into <a href="https://www.82-0.com" target="_blank">82-0.com</a>.
+        </p>
+        <details class="help-popover">
+          <summary aria-label="How to use">?</summary>
+          <div class="help-body">
+            <ol>
+              <li>Open <a href="https://www.82-0.com/">82-0.com</a>.</li>
+              <li>Open DevTools with <code>Option Command I</code> on Mac or <code>F12</code> on Windows.</li>
+              <li>Go to the Console tab.</li>
+              <li>Paste the generated script and press Enter.</li>
+              <li>Spin in the game. The next five spins follow the configured sequence.</li>
+            </ol>
+          </div>
+        </details>
+      </div>
+
+      <div class="spin-grid" id="spin-grid">
+        <div></div>
+        <div class="label">Team</div>
+        <div class="label">Era</div>
+      </div>
+
+      <textarea id="script-output" class="script-area" spellcheck="false" readonly></textarea>
+
+      <div class="actions">
+        <button type="button" id="copy-script">Copy script</button>
+        <button type="button" id="open-game">Open 82-0.com</button>
+        <span class="status" id="spin-status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <a href="https://github.com/onion-eater/82-0-Solver" target="_blank">Github</a>
+    </footer>
+  </main>
+
+  <script src="solver-core.js"></script>
+  <script>
+    const Core = window.EightyTwoZeroSolverCore;
+    const positions = Core ? Core.ALL_POSITIONS : ["PG", "SG", "SF", "PF", "C"];
+    const defaultSpins = [
+      ["GSW", "60's"],
+      ["ATL", "60's"],
+      ["LAL", "60's"],
+      ["CHI", "80's"],
+      ["SAC", "60's"]
+    ];
+    const eraLabels = ["60's", "70's", "80's", "90's", "00's", "10's", "20's"];
+    const eraMap = {
+      "60's": "1960s",
+      "70's": "1970s",
+      "80's": "1980s",
+      "90's": "1990s",
+      "00's": "2000s",
+      "10's": "2010s",
+      "20's": "2020s"
+    };
+    const fullEraToShort = Object.fromEntries(Object.entries(eraMap).map(([short, full]) => [full, short]));
+
+    let players = [];
+    let playerIndex = null;
+    let precomputedOpenings = null;
+    let solverWorker = null;
+    let requestId = 0;
+    const playerValueToId = new Map();
+
+    const grid = document.getElementById("spin-grid");
+    const output = document.getElementById("script-output");
+    const spinStatus = document.getElementById("spin-status");
+    const solverStatus = document.getElementById("solver-status");
+    const solverOutput = document.getElementById("solver-output");
+
+    function el(tag, attrs, children) {
+      const node = document.createElement(tag);
+      for (const [key, value] of Object.entries(attrs || {})) {
+        if (key === "text") node.textContent = value;
+        else node.setAttribute(key, value);
+      }
+      for (const child of children || []) node.appendChild(child);
+      return node;
+    }
+
+    function normalizeEraInput(value) {
+      const clean = String(value || "").trim().replace(/’/g, "'");
+      if (/^\d{2}s$/.test(clean)) return eraMap[`${clean.slice(0, 2)}'s`] || "";
+      return eraMap[clean] || (fullEraToShort[clean] ? clean : "");
+    }
+
+    function shortEraLabel(era) {
+      return fullEraToShort[era] || era;
+    }
+
+    function playerLabel(player) {
+      const slots = (player.positions || [player.pos]).join("/");
+      return `${player.player} | ${player.team} | ${player.era} | ${slots}`;
+    }
+
+    function setActiveTab(tab) {
+      for (const button of document.querySelectorAll("[data-tab]")) {
+        button.setAttribute("aria-selected", button.dataset.tab === tab ? "true" : "false");
+      }
+      for (const panel of document.querySelectorAll("[data-panel]")) {
+        panel.hidden = panel.dataset.panel !== tab;
+      }
+    }
+
+    async function loadSolverData() {
+      if (players.length) return;
+      const [rawPlayers, table] = await Promise.all([
+        fetch("data/players.json").then((response) => response.json()),
+        fetch("data/precomputed-depth2-standard-82.json")
+          .then((response) => response.ok ? response.json() : null)
+          .catch(() => null)
+      ]);
+      players = Core.normalizePlayers(rawPlayers);
+      playerIndex = Core.indexPlayers(players);
+      precomputedOpenings = table || { entries: {} };
+      fillSolverInputs();
+      solverStatus.textContent = `loaded ${players.length} player seasons`;
+    }
+
+    function fillSolverInputs() {
+      const teamSelect = document.getElementById("solve-team");
+      const eraSelect = document.getElementById("solve-era");
+      teamSelect.replaceChildren(el("option", { value: "", text: "team" }));
+      eraSelect.replaceChildren(el("option", { value: "", text: "era" }));
+      for (const team of playerIndex.teams) teamSelect.appendChild(el("option", { value: team, text: team }));
+      for (const shortEra of eraLabels) eraSelect.appendChild(el("option", { value: eraMap[shortEra], text: shortEra }));
+
+      const rosterGrid = document.getElementById("roster-grid");
+      const listContainer = document.getElementById("player-lists");
+      listContainer.replaceChildren();
+      playerValueToId.clear();
+      for (const player of players) playerValueToId.set(playerLabel(player), player.id);
+      for (const pos of positions) {
+        const listId = `player-list-${pos.toLowerCase()}`;
+        rosterGrid.appendChild(el("div", { class: "label", text: pos }));
+        rosterGrid.appendChild(el("input", {
+          "data-roster-position": pos,
+          list: listId,
+          autocomplete: "off",
+          placeholder: "Player | TEAM | era"
+        }));
+        listContainer.appendChild(el("datalist", { id: listId }));
+      }
+      teamSelect.addEventListener("change", updatePlayerLists);
+      eraSelect.addEventListener("change", updatePlayerLists);
+      updatePlayerLists();
+    }
+
+    function updatePlayerLists() {
+      const team = document.getElementById("solve-team").value;
+      const era = document.getElementById("solve-era").value;
+      for (const pos of positions) {
+        const list = document.getElementById(`player-list-${pos.toLowerCase()}`);
+        const fragment = document.createDocumentFragment();
+        for (const player of players) {
+          const eligible = player.positions || [player.pos];
+          if (!eligible.includes(pos)) continue;
+          if (team && player.team !== team) continue;
+          if (era && player.era !== era) continue;
+          fragment.appendChild(el("option", { value: playerLabel(player) }));
+        }
+        list.replaceChildren(fragment);
+      }
+    }
+
+    function playerFromInput(raw) {
+      const text = raw.trim();
+      if (!text) return { player: null };
+      const exactId = playerValueToId.get(text);
+      if (exactId) return { player: playerIndex.playersById.get(exactId) };
+
+      const parts = text.split("|").map((part) => part.trim()).filter(Boolean);
+      if (parts.length >= 3) {
+        const found = Core.findPlayer(players, parts[0], parts[1].toUpperCase(), normalizeEraInput(parts[2]));
+        if (found) return { player: found };
+      }
+
+      const name = text.toLowerCase().replace(/\s+/g, " ");
+      const matches = players.filter((player) => player.player.toLowerCase() === name);
+      if (matches.length === 1) return { player: matches[0] };
+      if (matches.length > 1) return { error: `${text} matches multiple seasons. Pick a full suggestion from the list.` };
+      return { error: `${text} was not found.` };
+    }
+
+    function readSolverState() {
+      const roster = {};
+      for (const pos of positions) roster[pos] = null;
+      const usedPlayers = new Set();
+      for (const input of document.querySelectorAll("[data-roster-position]")) {
+        const pos = input.dataset.rosterPosition;
+        const result = playerFromInput(input.value);
+        if (result.error) return { error: `${pos}: ${result.error}` };
+        if (!result.player) continue;
+        const eligible = result.player.positions || [result.player.pos];
+        if (!eligible.includes(pos)) {
+          return { error: `${result.player.player} cannot currently be placed at ${pos}.` };
+        }
+        const playerKey = result.player.baseSlug || result.player.player.toLowerCase();
+        if (usedPlayers.has(playerKey)) {
+          return { error: `${result.player.player} is already on the roster.` };
+        }
+        usedPlayers.add(playerKey);
+        roster[pos] = result.player.id;
+      }
+      const state = {
+        roster,
+        currentTeam: document.getElementById("solve-team").value,
+        currentEra: document.getElementById("solve-era").value,
+        teamSwitchUsed: document.getElementById("team-switch-used").checked,
+        eraSwitchUsed: document.getElementById("era-switch-used").checked
+      };
+      if (!state.currentTeam || !state.currentEra) return { error: "Team and era are required." };
+      if (!(playerIndex.playersByCombo.get(`${state.currentTeam}|${state.currentEra}`) || []).length) {
+        return { error: `${state.currentTeam} ${shortEraLabel(state.currentEra)} is not a live roll combo.` };
+      }
+      return { state };
+    }
+
+    function rosterList(roster) {
+      return positions.map((pos) => roster[pos] ? playerIndex.playersById.get(roster[pos]) : null).filter(Boolean);
+    }
+
+    function rosterSize(roster) {
+      return positions.reduce((count, pos) => count + (roster[pos] ? 1 : 0), 0);
+    }
+
+    function precomputedGoalResult(state) {
+      const entry = precomputedOpenings?.entries?.[`${state.currentTeam}|${state.currentEra}`]?.eightyTwoZero;
+      if (!entry) return null;
+      const metadata = precomputedOpenings?.metadata || {};
+      return {
+        goal: "eightyTwoZero",
+        value: entry.value,
+        bestActionLabel: entry.action?.label || "none",
+        topActions: entry.topActions || [],
+        statesVisited: 0,
+        approximate: true,
+        precomputed: true,
+        precomputeNote: `precomputed first-pick estimate, depth ${metadata.depth || "?"}/top${metadata.candidateLimit || "?"}`
+      };
+    }
+
+    function shouldKeepPrecomputed(current, next) {
+      return !!current?.precomputed && (!next || next.heuristic || next.approximate);
+    }
+
+    function goalBadge(goal) {
+      if (!goal) return "searching";
+      if (goal.precomputed) return "precomputed";
+      if (goal.greedy) return "greedy";
+      if (goal.heuristic) return "rough";
+      if (goal.timedOut) return "time budget";
+      if (goal.stateLimited || (goal.truncated && !goal.timedOut)) return "state limit";
+      if (goal.approximate) return "partial";
+      return "exact";
+    }
+
+    function goalValue(goal) {
+      if (!goal) return "";
+      if (goal.goal === "maxScore") return `Expected: ${goal.value.toFixed(3)} OVR`;
+      const label = goal.precomputed ? "Precomputed chance" : goal.greedy ? "Greedy chance" : "Chance";
+      return `${label}: ${(goal.value * 100).toFixed(1)}%`;
+    }
+
+    function goalSource(goal) {
+      if (!goal) return "";
+      if (goal.precomputed) return goal.precomputeNote;
+      const states = `${goal.statesVisited || 0} states`;
+      if (goal.greedy) return `${states}, greedy all-combo tail`;
+      return states;
+    }
+
+    function renderGoal(label, goal) {
+      return el("div", { class: "goal-card" }, [
+        el("div", { class: "goal-title", text: `${label} (${goalBadge(goal)})` }),
+        el("div", { class: "goal-action", text: goal ? (goal.bestActionLabel || "none") : "searching..." }),
+        el("div", { class: "goal-meta", text: goalValue(goal) }),
+        el("div", { class: "goal-meta", text: goalSource(goal) })
+      ]);
+    }
+
+    function renderSolverView(view, done) {
+      const maxStates = view.goals.maxScore?.statesVisited || 0;
+      const eightyTwoStates = view.goals.eightyTwoZero?.statesVisited || 0;
+      solverOutput.replaceChildren(
+        el("div", { class: "summary" }, [
+          el("span", { text: done ? "done" : "running" }),
+          el("span", { text: "standard" }),
+          el("span", { text: `${view.currentStandard.teamOvr.toFixed(1)} OVR` }),
+          el("span", { text: `${view.currentStandard.wins}-${view.currentStandard.losses}` }),
+          el("span", { text: `${maxStates + eightyTwoStates} states` })
+        ]),
+        renderGoal("Max score", view.goals.maxScore),
+        renderGoal("82-0", view.goals.eightyTwoZero)
+      );
+    }
+
+    function stopWorker() {
+      if (solverWorker) solverWorker.terminate();
+      solverWorker = null;
+    }
+
+    async function solveCurrentState() {
+      await loadSolverData();
+      const read = readSolverState();
+      if (read.error) {
+        solverStatus.textContent = read.error;
+        solverOutput.replaceChildren();
+        return;
+      }
+
+      const state = read.state;
+      const currentStandard = Core.calculateTeamResult(rosterList(state.roster), false);
+      const view = { currentStandard, goals: {} };
+      if (rosterSize(state.roster) === 0 && !state.teamSwitchUsed && !state.eraSwitchUsed) {
+        const precomputed = precomputedGoalResult(state);
+        if (precomputed) view.goals.eightyTwoZero = precomputed;
+      }
+
+      const id = ++requestId;
+      stopWorker();
+      solverWorker = new Worker("ev-worker.js");
+      solverStatus.textContent = "calculating...";
+      renderSolverView(view, false);
+
+      solverWorker.onmessage = (event) => {
+        const message = event.data || {};
+        if (message.id && message.id !== id) return;
+        if (message.type === "INIT_DONE") {
+          solverWorker.postMessage({
+            type: "SOLVE_EV",
+            id,
+            state,
+            options: {
+              objective: "standard",
+              candidateLimit: 0,
+              maxStates: 0,
+              timeLimitMs: 0
+            }
+          });
+          return;
+        }
+        if (message.type === "SOLVE_EV_PROGRESS") {
+          const progress = message.progress;
+          if (!progress?.goal) return;
+          if (shouldKeepPrecomputed(view.goals[progress.goal], progress)) return;
+          view.goals[progress.goal] = progress;
+          renderSolverView(view, false);
+          return;
+        }
+        if (message.type === "SOLVE_EV_DONE") {
+          const goals = { ...(message.result.goals || {}) };
+          if (shouldKeepPrecomputed(view.goals.eightyTwoZero, goals.eightyTwoZero)) {
+            goals.eightyTwoZero = view.goals.eightyTwoZero;
+          }
+          view.currentStandard = message.result.currentStandard;
+          view.goals = goals;
+          solverStatus.textContent = "done";
+          renderSolverView(view, true);
+          stopWorker();
+          return;
+        }
+        if (message.type === "ERROR") {
+          solverStatus.textContent = message.error || "solver failed";
+          stopWorker();
+        }
+      };
+      solverWorker.onerror = () => {
+        solverStatus.textContent = "worker failed";
+        stopWorker();
+      };
+      solverWorker.postMessage({ type: "INIT", players });
+    }
+
+    function addSpinRow([team, era], index) {
+      const number = document.createElement("div");
+      number.className = "label";
+      number.textContent = String(index + 1);
+
+      const teamInput = document.createElement("input");
+      teamInput.value = team;
+      teamInput.maxLength = 4;
+      teamInput.autocapitalize = "characters";
+      teamInput.setAttribute("aria-label", `Spin ${index + 1} team`);
+
+      const eraSelect = document.createElement("select");
+      eraSelect.setAttribute("aria-label", `Spin ${index + 1} era`);
+      for (const eraLabel of eraLabels) {
+        const option = document.createElement("option");
+        option.value = eraLabel;
+        option.textContent = eraLabel;
+        eraSelect.appendChild(option);
+      }
+      eraSelect.value = era;
+
+      teamInput.addEventListener("input", updateScript);
+      eraSelect.addEventListener("change", updateScript);
+      grid.append(number, teamInput, eraSelect);
+    }
+
+    function spinPairs() {
+      const rows = [];
+      const inputs = grid.querySelectorAll("input");
+      const selects = grid.querySelectorAll("select");
+      for (let i = 0; i < defaultSpins.length; i += 1) {
+        const team = inputs[i].value.trim().toUpperCase() || defaultSpins[i][0];
+        rows.push([team, selects[i].value]);
+      }
+      return rows;
+    }
+
+    function generatedScript() {
+      return `(async () => {
+  let p = ${JSON.stringify(spinPairs())};
+  let D = ${JSON.stringify(eraLabels)};
+  let M = ${JSON.stringify(eraMap)};
+  let g = {}, i = 0, n = null, R = Math.random, L = console.log;
+  let j = await fetch("https://firebasestorage.googleapis.com/v0/b/project-4599904239656435772.firebasestorage.app/o/players_flat.json?alt=media").then(r => r.json());
+
+  j.forEach(x => x.team && x.era && (((g[x.team] ??= {})[x.era] ??= []).push(x)));
+
+  let c = [];
+  Object.entries(g).forEach(([t,e]) => D.forEach(d => e[M[d]]?.length && c.push([t,d])));
+
+  p = p.map(([t,d]) => {
+    let x = c.findIndex(y => y[0] == t && y[1] == d);
+    if (x < 0) throw new Error("Fixed spin target unavailable: " + t + " " + d);
+    return (x + .5) / c.length;
+  });
+
+  function restore() {
+    if (Math.random === fixedRandom) Math.random = R;
+    if (console.log === fixedLog) console.log = L;
+  }
+
+  function fixedRandom() {
+    if (n !== null) {
+      let v = n;
+      n = null;
+      if (i >= p.length) restore();
+      return v;
+    }
+    return R();
+  }
+
+  function fixedLog(...x) {
+    if (typeof x[0] == "string" && x[0].includes("[v0] Starting spin animation") && i < p.length) n = p[i++];
+    return L(...x);
+  }
+
+  Math.random = fixedRandom;
+  console.log = fixedLog;
+  L("[82-0 Solver] Fixed spins ready.");
+})();`;
+    }
+
+    function updateScript() {
+      output.value = generatedScript();
+      spinStatus.textContent = "";
+    }
+
+    async function copyScript() {
+      updateScript();
+      try {
+        await navigator.clipboard.writeText(output.value);
+        spinStatus.textContent = "Copied.";
+      } catch (error) {
+        spinStatus.textContent = "Copy failed. Select the script manually.";
+      }
+    }
+
+    for (const button of document.querySelectorAll("[data-tab]")) {
+      button.addEventListener("click", () => setActiveTab(button.dataset.tab));
+    }
+    defaultSpins.forEach(addSpinRow);
+    document.getElementById("copy-script").addEventListener("click", copyScript);
+    document.getElementById("open-game").addEventListener("click", () => {
+      window.open("https://www.82-0.com/", "_blank", "noopener");
+    });
+    document.getElementById("solve-button").addEventListener("click", solveCurrentState);
+    updateScript();
+    if (!Core) {
+      solverStatus.textContent = "load failed: solver-core.js did not load";
+    } else {
+      loadSolverData().catch((error) => {
+        solverStatus.textContent = `load failed: ${error && error.message ? error.message : error}`;
+      });
+    }
+  </script>
+</body>
+</html>

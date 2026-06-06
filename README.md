@@ -1,15 +1,26 @@
-# 82-0 Solver Chrome Extension
+# 82-0 Solver
 
-Minimal unpacked Chrome extension for analyzing live states in the
-[82-0.com](https://www.82-0.com/) NBA simulator.
+Minimal solver for analyzing states in the
+[82-0.com](https://www.82-0.com/) NBA simulator. It is available as both:
 
-The extension adds a small overlay to the game page. It reads the current roll,
-roster, switch state, and then recommends actions for two goals:
+- a standalone website: [82-0.nolanjiang.com](https://82-0.nolanjiang.com/)
+- an unpacked Chrome extension that overlays the live game page
+
+Both versions recommend actions for two goals:
 
 - maximize expected final Standard team OVR
 - maximize the chance of reaching 82-0
 
-## Install And Run
+## Website
+
+Open [82-0.nolanjiang.com](https://82-0.nolanjiang.com/) to use the standalone
+solver or generate a fixed-spins script. The website is static and uses the same
+solver core, worker, player data, and precomputed table as the extension.
+
+## Chrome Extension
+
+The extension adds a small overlay to the game page. It reads the current roll,
+roster, switch state, and then recommends actions.
 
 No build step or package install is required.
 
@@ -24,7 +35,7 @@ No build step or package install is required.
 If you edit the extension files, reload the unpacked extension on
 `chrome://extensions` and refresh the 82-0 tab.
 
-## Overlay Controls
+## Extension Overlay Controls
 
 - `read`: read the visible team, era, switches, and roster.
 - `pool`: show strong legal players from the current team/era pool.
@@ -36,8 +47,8 @@ script because a normal content script cannot override the page's `Math.random`.
 
 ## Data
 
-Bundled player data lives in `data/players.json`. It is static extension data and
-is loaded locally by the content script and worker.
+Bundled player data lives in `data/players.json`. It is static data loaded by the
+website, extension content script, and worker.
 
 The optional first-pick estimate table lives in
 `data/precomputed-depth2-standard-82.json`.
@@ -60,13 +71,13 @@ Current defaults:
 - top `3` pick actions per expanded roll
 - remaining picks use a switch-aware greedy tail estimate
 
-The extension uses this table only when the roster has `0` filled slots and both
-switches are unused. Later states are solved at runtime based on the current
-roster size, not by roll number.
+The UI uses this table only when the roster has `0` filled slots and both switches
+are unused. Later states are solved at runtime based on the current roster size,
+not by roll number.
 
 ## Scoring
 
-The extension's default objective is Standard scoring.
+The default objective is Standard scoring.
 
 Standard team OVR:
 
@@ -94,8 +105,8 @@ wins = round(82 * min(teamOvr / 110, 1) ^ 1.15)
 
 A Standard team OVR of `110` or higher is treated as sufficient for 82-0.
 
-The solver also contains adjusted-rating helpers for parity checks, but the UI
-always runs Standard scoring.
+The solver also contains adjusted-rating helpers for parity checks, but the UIs
+always run Standard scoring.
 
 ## Solver Methodology
 
@@ -133,11 +144,11 @@ Runtime solving depends on filled roster size:
 - `3-4` filled slots: use exact bitmask-style DP for the remaining picks
 - `5` filled slots: score the terminal roster directly
 
-For late-game states, the overlay first shows a greedy estimate and then keeps
+For late-game states, the UI first shows a greedy estimate and then keeps
 updating the state count while exact search runs.
 
-The worker reports both max-score and 82-0 recommendations. These can differ,
-so the overlay displays both.
+The worker reports both max-score and 82-0 recommendations. These can differ, so
+the UIs display both.
 
 ## Verification
 
@@ -152,6 +163,7 @@ node --check fixed-spins.js
 node --check roll-listener.js
 node --check precompute-depth.js
 node precompute-depth.js --self-test
+node -e "const fs=require('fs'); const html=fs.readFileSync('index.html','utf8'); const scripts=[...html.matchAll(/<script(?: src=\"[^\"]+\")?>([\s\S]*?)<\/script>/g)].map(m=>m[1]).filter(Boolean).join('\n'); new Function(scripts); console.log('inline script ok');"
 ```
 
 Manifest and bundled JSON smoke check:
@@ -162,7 +174,9 @@ node -e "for (const f of ['manifest.json','data/players.json','data/precomputed-
 
 ## Privacy And Permissions
 
-The extension runs only on:
+The website runs as a static page and does not require extension permissions.
+
+The Chrome extension runs only on:
 
 - `https://82-0.com/*`
 - `https://www.82-0.com/*`
