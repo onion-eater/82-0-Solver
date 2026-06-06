@@ -82,10 +82,36 @@
 
     .solver-panel .form-grid {
       gap: 8px;
+      grid-template-columns: minmax(130px, 0.75fr) repeat(2, minmax(130px, 1fr));
+      max-width: 680px;
     }
 
     .solver-panel .checkbox-row {
       margin: 8px 0;
+    }
+
+    .solver-panel .goal-heading {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      margin-bottom: 2px;
+    }
+
+    .solver-panel .goal-heading .help-popover summary {
+      width: 18px;
+      height: 18px;
+      font-size: 12px;
+    }
+
+    .solver-panel #solve-goal {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .solver-panel .goal-help .help-body {
+      left: 0;
+      right: auto;
+      top: 24px;
     }
 
     .solver-panel .checkbox-row label {
@@ -116,10 +142,9 @@
     .solver-panel .output {
       margin-top: 8px;
       gap: 6px;
-      grid-template-columns: minmax(130px, 0.7fr) repeat(2, minmax(220px, 1fr));
+      grid-template-columns: 1fr;
     }
 
-    .solver-panel .summary,
     .solver-panel .goal-card {
       padding: 8px;
     }
@@ -300,24 +325,21 @@
       color: #333;
     }
 
+    .solver-panel .status {
+      font-size: 12px;
+    }
+
     .output {
       margin-top: 14px;
       display: grid;
       gap: 8px;
     }
 
-    .summary,
     .goal-card {
       border: 1px solid #999;
       background: #fff;
       border-radius: 4px;
       padding: 10px;
-    }
-
-    .summary {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
     }
 
     .goal-title,
@@ -363,6 +385,22 @@
       </p>
 
       <div class="form-grid">
+        <div>
+          <div class="goal-heading">
+            <label for="solve-goal">Goal</label>
+            <details class="help-popover goal-help">
+              <summary aria-label="Goal help">?</summary>
+              <div class="help-body">
+                Max score chooses the action with the highest expected final Standard OVR.
+                82-0 chooses the action with the highest chance to finish at 110+ Standard OVR,
+              </div>
+            </details>
+          </div>
+          <select id="solve-goal">
+            <option value="maxScore">Max score</option>
+            <option value="eightyTwoZero">82-0</option>
+          </select>
+        </div>
         <label>
           Team
           <select id="solve-team">
@@ -464,6 +502,8 @@
     let precomputedOpenings = null;
     let solverWorker = null;
     let requestId = 0;
+    let currentSolverView = null;
+    let currentSolverDone = false;
     const playerValueToId = new Map();
 
     const grid = document.getElementById("spin-grid");
@@ -674,6 +714,23 @@
       return states;
     }
 
+    function selectedGoalKey() {
+      return document.getElementById("solve-goal").value || "maxScore";
+    }
+
+    function selectedGoalLabel() {
+      return selectedGoalKey() === "eightyTwoZero" ? "82-0" : "Max score";
+    }
+
+    function searchedStateCount(view) {
+      return (view.goals.maxScore?.statesVisited || 0) + (view.goals.eightyTwoZero?.statesVisited || 0);
+    }
+
+    function updateSolverStatus(view, done) {
+      const states = searchedStateCount(view);
+      solverStatus.textContent = `${done ? "done" : "running"} (searched through ${states} states)`;
+    }
+
     function renderGoal(label, goal) {
       return el("div", { class: "goal-card" }, [
         el("div", { class: "goal-title", text: `${label} (${goalBadge(goal)})` }),
@@ -684,19 +741,11 @@
     }
 
     function renderSolverView(view, done) {
-      const maxStates = view.goals.maxScore?.statesVisited || 0;
-      const eightyTwoStates = view.goals.eightyTwoZero?.statesVisited || 0;
-      solverOutput.replaceChildren(
-        el("div", { class: "summary" }, [
-          el("span", { text: done ? "done" : "running" }),
-          el("span", { text: "standard" }),
-          el("span", { text: `${view.currentStandard.teamOvr.toFixed(1)} OVR` }),
-          el("span", { text: `${view.currentStandard.wins}-${view.currentStandard.losses}` }),
-          el("span", { text: `${maxStates + eightyTwoStates} states` })
-        ]),
-        renderGoal("Max score", view.goals.maxScore),
-        renderGoal("82-0", view.goals.eightyTwoZero)
-      );
+      currentSolverView = view;
+      currentSolverDone = done;
+      updateSolverStatus(view, done);
+      const goalKey = selectedGoalKey();
+      solverOutput.replaceChildren(renderGoal(selectedGoalLabel(), view.goals[goalKey]));
     }
 
     function stopWorker() {
@@ -710,6 +759,8 @@
       if (read.error) {
         solverStatus.textContent = read.error;
         solverOutput.replaceChildren();
+        currentSolverView = null;
+        currentSolverDone = false;
         return;
       }
 
@@ -759,7 +810,6 @@
           }
           view.currentStandard = message.result.currentStandard;
           view.goals = goals;
-          solverStatus.textContent = "done";
           renderSolverView(view, true);
           stopWorker();
           return;
@@ -873,6 +923,12 @@
       }
     }
 
+    document.addEventListener("click", (event) => {
+      for (const details of document.querySelectorAll(".help-popover[open]")) {
+        if (!details.contains(event.target)) details.removeAttribute("open");
+      }
+    });
+
     for (const button of document.querySelectorAll("[data-tab]")) {
       button.addEventListener("click", () => setActiveTab(button.dataset.tab));
     }
@@ -880,6 +936,9 @@
     document.getElementById("copy-script").addEventListener("click", copyScript);
     document.getElementById("open-game").addEventListener("click", () => {
       window.open("https://www.82-0.com/", "_blank", "noopener");
+    });
+    document.getElementById("solve-goal").addEventListener("change", () => {
+      if (currentSolverView) renderSolverView(currentSolverView, currentSolverDone);
     });
     document.getElementById("solve-button").addEventListener("click", solveCurrentState);
     updateScript();
