@@ -986,5 +986,14 @@
       });
     }
   </script>
+  <script>
+    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    if (location.hostname && !["localhost", "127.0.0.1"].includes(location.hostname)) {
+      const vercelAnalytics = document.createElement("script");
+      vercelAnalytics.defer = true;
+      vercelAnalytics.src = "/_vercel/insights/script.js";
+      document.head.appendChild(vercelAnalytics);
+    }
+  </script>
 </body>
 </html>
