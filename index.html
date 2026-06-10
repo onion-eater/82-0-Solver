@@ -707,6 +707,7 @@
       return {
         goal: "eightyTwoZero",
         value: entry.value,
+        bestAction: entry.action || null,
         bestActionLabel: entry.action?.label || "none",
         topActions: entry.topActions || [],
         statesVisited: 0,
@@ -799,10 +800,28 @@
       const state = read.state;
       const currentStandard = Core.calculateTeamResult(rosterList(state.roster), false);
       const view = { currentStandard, goals: {} };
+      const precomputedGoals = {};
       if (rosterSize(state.roster) === 0 && !state.teamSwitchUsed && !state.eraSwitchUsed) {
         const precomputed = precomputedGoalResult(state);
-        if (precomputed) view.goals.eightyTwoZero = precomputed;
+        if (precomputed) {
+          view.goals.eightyTwoZero = precomputed;
+          precomputedGoals.eightyTwoZero = precomputed;
+        }
       }
+      const workerOptions = Object.keys(precomputedGoals).length
+        ? {
+          objective: "standard",
+          candidateLimit: 0,
+          maxStates: 0,
+          timeLimitMs: 0,
+          precomputedGoals
+        }
+        : {
+          objective: "standard",
+          candidateLimit: 0,
+          maxStates: 0,
+          timeLimitMs: 0
+        };
 
       const id = ++requestId;
       stopWorker();
@@ -818,12 +837,7 @@
             type: "SOLVE_EV",
             id,
             state,
-            options: {
-              objective: "standard",
-              candidateLimit: 0,
-              maxStates: 0,
-              timeLimitMs: 0
-            }
+            options: workerOptions
           });
           return;
         }
@@ -897,24 +911,283 @@
 
     function generatedScript() {
       return `(async () => {
-  let p = ${JSON.stringify(spinPairs())};
+  let P = ${JSON.stringify(spinPairs())};
   let D = ${JSON.stringify(eraLabels)};
   let M = ${JSON.stringify(eraMap)};
-  let g = {}, i = 0, n = null, R = Math.random, L = console.log;
-  let j = await fetch("https://firebasestorage.googleapis.com/v0/b/project-4599904239656435772.firebasestorage.app/o/players_flat.json?alt=media").then(r => r.json());
+  let U = "https://firebasestorage.googleapis.com/v0/b/project-4599904239656435772.firebasestorage.app/o/players_flat.json?alt=media";
+  let A = ["PG", "SG", "SF", "PF", "C"];
+  let R = Math.random, L = console.log, i = 0, n = null, pendingIndex = -1, timer = null, ignore = 0, last = "spin", pending = null, pendingFrom = null, ignoreSlotClickUntil = 0;
+  let warned = new Set(), tracked = {};
+  A.forEach(p => tracked[p] = null);
 
-  j.forEach(x => x.team && x.era && (((g[x.team] ??= {})[x.era] ??= []).push(x)));
+  function warn(k, m) { if (!warned.has(k)) { warned.add(k); L("[82-0 Solver] " + m); } }
+  function lines(x) { return String(x || "").split(/\\n+/).map(y => y.trim()).filter(Boolean); }
+  function clean(x) { return String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+  function slug(x) { return clean(x).replace(/\\s+/g, "_"); }
+  function normEra(x) {
+    let c = String(x || "").trim().replace(/’/g, "'");
+    if (M[c]) return M[c];
+    return D.map(d => M[d]).includes(c) ? c : "";
+  }
+  function shortEra(e) { return D.find(d => M[d] == e) || e; }
 
-  let c = [];
-  Object.entries(g).forEach(([t,e]) => D.forEach(d => e[M[d]]?.length && c.push([t,d])));
+  let raw = await fetch(U).then(r => r.json());
+  let players = raw.map(x => {
+    let era = normEra(x.era);
+    let positions = (Array.isArray(x.positions) && x.positions.length ? x.positions : [x.pos || "SF"]).filter(p => A.includes(p));
+    if (!positions.length) positions = ["SF"];
+    return Object.assign({}, x, {
+      era,
+      positions,
+      id: x.id || slug(x.player) + "_" + x.team + "_" + era,
+      baseSlug: x.baseSlug || slug(x.player)
+    });
+  }).filter(x => x.team && x.era);
 
-  p = p.map(([t,d]) => {
-    let x = c.findIndex(y => y[0] == t && y[1] == d);
+  let G = {}, T = [], C = [];
+  players.forEach(x => {
+    if (!G[x.team]) { G[x.team] = {}; T.push(x.team); }
+    (G[x.team][x.era] || (G[x.team][x.era] = [])).push(x);
+  });
+  T.forEach(t => D.forEach(d => G[t][M[d]]?.length && C.push([t, d])));
+
+  let F = P.map(([t, d]) => {
+    let x = C.findIndex(y => y[0] == t && y[1] == d);
     if (x < 0) throw new Error("Fixed spin target unavailable: " + t + " " + d);
-    return (x + .5) / c.length;
+    return (x + .5) / C.length;
   });
 
+  function emptyRoster() { let r = {}; A.forEach(p => r[p] = null); return r; }
+  function findPlayer(name, team, era) {
+    let wanted = clean(name);
+    return players.find(p => clean(p.player) == wanted && p.team == team && p.era == era) || null;
+  }
+  function teamEra(line) {
+    let m = String(line || "").match(/([A-Z0-9]{2,4})\\s*(?:·|\\||-|\\s)\\s*(((?:19|20)\\d0s)|(?:\\d{2}['’]?s))/);
+    if (!m) return null;
+    let era = normEra(m[2]);
+    return era ? { team: m[1].toUpperCase(), era } : null;
+  }
+  function findTeamEra(ls, start) {
+    for (let x = start; x < Math.min(ls.length, start + 5); x += 1) {
+      let parsed = teamEra(ls[x]);
+      if (parsed) return parsed;
+    }
+    return null;
+  }
+  function countRoster(r) { return A.reduce((sum, p) => sum + (r[p] ? 1 : 0), 0); }
+  function readRoster() {
+    let r = emptyRoster(), seen = new Set(), ls = lines(document.body.innerText), s = ls.findIndex(x => /^Roster$/i.test(x));
+    if (s < 0) return { roster: Object.assign({}, tracked), count: countRoster(tracked), uncertain: false, seen: false };
+    let uncertain = false, e = ls.findIndex((x, k) => k > s && /^Switches$/i.test(x)), part = ls.slice(s + 1, e > s ? e : s + 45);
+    for (let x = 0; x < part.length; x += 1) {
+      let pos = part[x];
+      if (!A.includes(pos)) continue;
+      seen.add(pos);
+      if (/^Empty$/i.test(part[x + 1] || "")) { tracked[pos] = null; continue; }
+      let parsed = findTeamEra(part, x + 2);
+      let player = parsed ? findPlayer(part[x + 1] || "", parsed.team, parsed.era) : null;
+      if (player) { r[pos] = player; tracked[pos] = player; }
+      else if (tracked[pos]) r[pos] = tracked[pos];
+      else uncertain = true;
+    }
+    A.forEach(p => { if (!seen.has(p) && tracked[p]) r[p] = tracked[p]; });
+    return { roster: r, count: countRoster(r), uncertain, seen: true };
+  }
+  function rosterPlayers(r) { return A.map(p => r[p]).filter(Boolean); }
+  function canAssign(list) {
+    let sorted = [...list].sort((a, b) => (a.positions?.length || 1) - (b.positions?.length || 1)), used = new Set();
+    function bt(k) {
+      if (k >= sorted.length) return true;
+      for (let pos of sorted[k].positions || [sorted[k].pos || "SF"]) {
+        if (used.has(pos)) continue;
+        used.add(pos);
+        if (bt(k + 1)) return true;
+        used.delete(pos);
+      }
+      return false;
+    }
+    return bt(0);
+  }
+  function canAdd(r, p) {
+    let cur = rosterPlayers(r), used = new Set(cur.map(x => x.baseSlug || slug(x.player)));
+    return !used.has(p.baseSlug || slug(p.player)) && canAssign(cur.concat([p]));
+  }
+  function nextLine(ls, start, fn) {
+    for (let x = start; x < Math.min(ls.length, start + 8); x += 1) {
+      if (/^(SPIN|Roster|Switches)$/i.test(ls[x])) break;
+      let v = fn(ls[x]);
+      if (v) return v;
+    }
+    return "";
+  }
+  function currentRoll() {
+    let text = document.body.innerText || "";
+    let m = text.match(/Pick from\\s+([A-Z0-9]{2,4})\\s*(?:·|\\||-)?\\s*(((?:19|20)\\d0s)|(?:\\d{2}['’]?s))/i);
+    if (m && normEra(m[2])) return { team: m[1].toUpperCase(), era: normEra(m[2]) };
+    let ls = lines(text);
+    for (let x = 0; x < ls.length; x += 1) {
+      if (!/^TEAM$/i.test(ls[x])) continue;
+      let team = nextLine(ls, x + 1, y => T.includes(y.toUpperCase()) ? y.toUpperCase() : "");
+      let ei = ls.findIndex((y, k) => k > x && k < x + 8 && /^ERA$/i.test(y));
+      let era = ei >= 0 ? nextLine(ls, ei + 1, normEra) : "";
+      if (team && era) return { team, era };
+    }
+    return null;
+  }
+  function candidates(kind, roll, roster) {
+    let out = [];
+    C.forEach(([t, d]) => {
+      if (kind == "team" && (!roll || d != shortEra(roll.era) || t == roll.team)) return;
+      if (kind == "era" && (!roll || t != roll.team || d == shortEra(roll.era))) return;
+      if ((G[t][M[d]] || []).some(p => canAdd(roster, p))) out.push([t, d]);
+    });
+    return out;
+  }
+  function dynamicValue(kind) {
+    let pair = P[i];
+    if (!pair) return null;
+    let roll = kind == "spin" ? null : currentRoll();
+    if (kind != "spin" && (!roll?.team || !roll?.era)) { warn("roll-" + i, "Fixed spins could not read current TEAM/ERA; using fallback if available."); return null; }
+    let state = readRoster();
+    if (state.uncertain || (kind == "spin" && i > 0 && state.count == 0 && !state.seen)) { warn("roster-" + i, "Fixed spins could not infer the current roster; using full-combo fallback for this later spin."); return null; }
+    let list = candidates(kind, roll, state.roster);
+    let x = list.findIndex(y => y[0] == pair[0] && y[1] == pair[1]);
+    if (x < 0) { warn("target-" + i, "Fixed spin target unavailable in current candidate list: " + pair[0] + " " + pair[1] + "; using fallback if available."); return null; }
+    return (x + .5) / list.length;
+  }
+  function fallback(kind) {
+    let v = F[i];
+    if (typeof v != "number") return null;
+    if (kind != "spin" || i > 0) warn("fallback-" + i, "Fixed spins are using static full-combo fallback for a constrained spin; the live result may differ.");
+    return v;
+  }
+  function clearTimer() { if (timer) clearTimeout(timer); timer = null; }
+  function arm(kind, source) {
+    if (i >= Math.max(P.length, F.length) || n !== null) return;
+    if (source == "log" && Date.now() < ignore) return;
+    let v = dynamicValue(kind) ?? fallback(kind);
+    if (typeof v != "number" || v < 0 || v >= 1) return;
+    n = v; pendingIndex = i;
+    if (source == "click") ignore = Date.now() + 1000;
+    clearTimer();
+    timer = setTimeout(() => { n = null; pendingIndex = -1; timer = null; }, 1500);
+  }
+  function kindOf(el) {
+    if (!el) return "";
+    let a = ((el.getAttribute?.("aria-label") || "") + " " + (el.getAttribute?.("title") || "") + " " + (el.innerText || el.textContent || "")).trim();
+    if (/^\\s*Respin\\s+team\\b/i.test(a)) return "team";
+    if (/^\\s*Respin\\s+era\\b/i.test(a)) return "era";
+    let txt = (el.innerText || el.textContent || "").trim();
+    if (/^SPIN$/i.test(txt)) return "spin";
+    if (/^(Team|Era)$/i.test(txt)) return txt.toLowerCase();
+    return "";
+  }
+  function slotPos(el) {
+    if (!el) return "";
+    let a = el.getAttribute?.("aria-label") || "";
+    return A.find(p => a.startsWith(p)) || exactSlotPos(el) || (slotButton(el) ? compactSlotPos(el) : "");
+  }
+  function slotLines(el) { return lines(el?.innerText || el?.textContent || ""); }
+  function exactSlotPos(el) { return slotLines(el).find(x => A.includes(x)) || ""; }
+  function compactSlotText(el) { return slotLines(el).join("").replace(/\\s+/g, "").toUpperCase(); }
+  function compactSlotPos(el) {
+    let txt = compactSlotText(el);
+    return A.find(p => txt.endsWith(p) && txt.length > p.length) || "";
+  }
+  function courtSlot(el) {
+    if (!el) return false;
+    if (el.classList?.contains("w-16") && el.classList.contains("h-16")) return true;
+    let a = el.getAttribute?.("aria-label") || "";
+    return el.getAttribute?.("role") == "button" && A.some(p => a.startsWith(p));
+  }
+  function rosterSlot(el) {
+    if (!el || el.tagName != "BUTTON") return false;
+    let c = String(el.className || "");
+    return c.includes("rounded-[12px]") && c.includes("flex-col") && c.includes("min-w-0");
+  }
+  function slotButton(el) { return courtSlot(el) || rosterSlot(el); }
+  function positionChoice(el) { return el?.tagName == "BUTTON" && !el.disabled && !slotButton(el) && !!exactSlotPos(el); }
+  function slotEmpty(el) {
+    let pos = slotPos(el), a = el?.getAttribute?.("aria-label") || "";
+    if (pos && a.toLowerCase().includes(pos.toLowerCase() + " empty")) return true;
+    let ls = slotLines(el), compact = compactSlotText(el);
+    return !!pos && ls.length > 0 && (ls.every(x => x == pos) || compact == pos || compact == pos + pos);
+  }
+  function clearPending() { pending = null; pendingFrom = null; }
+  function setPending(player, from = null) { pending = player; pendingFrom = from; }
+  function placePending(pos) {
+    if (!pos || !pending) return false;
+    let from = pendingFrom, replaced = from && from != pos ? tracked[pos] : null;
+    if (from && from != pos) tracked[from] = replaced?.id != pending.id ? replaced : null;
+    A.forEach(p => { if (p != pos && p != from && tracked[p]?.id == pending.id) tracked[p] = null; });
+    tracked[pos] = pending;
+    clearPending();
+    return true;
+  }
+  function selectFilledSlot(el) {
+    let pos = slotPos(el);
+    if (!pos || !slotButton(el) || slotEmpty(el) || !tracked[pos]) return false;
+    setPending(tracked[pos], pos);
+    return true;
+  }
+  function targetFromEvent(e) {
+    let direct = closestTarget(e.target);
+    if (direct) return direct;
+    let pointed = typeof e.clientX == "number" && typeof e.clientY == "number" ? document.elementFromPoint(e.clientX, e.clientY) : null;
+    return closestTarget(pointed);
+  }
+  function closestTarget(node) {
+    return node?.closest?.("button, [role=button]") || node?.querySelector?.("button, [role=button]") || null;
+  }
+  function playerFromCard(target) {
+    for (let node = target; node && node !== document.body; node = node.parentElement) {
+      let ls = lines(node.innerText || "");
+      if (ls.length < 3 || ls.length > 24) continue;
+      let k = ls.findIndex(x => teamEra(x));
+      if (k < 1) continue;
+      let parsed = teamEra(ls[k]);
+      for (let ni of [k - 2, k - 1]) {
+        let player = findPlayer(ls[ni], parsed.team, parsed.era);
+        if (player) return player;
+      }
+    }
+    return null;
+  }
+  function click(e) {
+    let target = e.target.closest?.("button, [role=button]");
+    let kind = kindOf(target);
+    if (kind) { last = kind; clearPending(); arm(kind, "click"); return; }
+    let pos = slotPos(target);
+    if (pos && (slotButton(target) || positionChoice(target))) {
+      if (Date.now() < ignoreSlotClickUntil) return;
+      if (pending && (positionChoice(target) || pos != pendingFrom || slotEmpty(target))) { placePending(pos); return; }
+      selectFilledSlot(target);
+      return;
+    }
+    let player = playerFromCard(e.target);
+    if (player) setPending(player);
+  }
+  function pointerDown(e) {
+    if (pending && e.type == "pointerdown") return;
+    let target = targetFromEvent(e);
+    if (target) selectFilledSlot(target);
+  }
+  function pointerUp(e) {
+    if (!pending) return;
+    let target = targetFromEvent(e), pos = target ? slotPos(target) : "";
+    if (pos && slotButton(target) && (pos != pendingFrom || slotEmpty(target))) {
+      if (placePending(pos) && e.type == "pointerup") ignoreSlotClickUntil = Date.now() + 250;
+    }
+  }
+
   function restore() {
+    clearTimer();
+    document.removeEventListener("click", click, true);
+    document.removeEventListener("pointerdown", pointerDown, true);
+    document.removeEventListener("pointerup", pointerUp, true);
+    document.removeEventListener("dragstart", pointerDown, true);
+    document.removeEventListener("drop", pointerUp, true);
     if (Math.random === fixedRandom) Math.random = R;
     if (console.log === fixedLog) console.log = L;
   }
@@ -923,17 +1196,24 @@
     if (n !== null) {
       let v = n;
       n = null;
-      if (i >= p.length) restore();
+      clearTimer();
+      if (pendingIndex >= 0) { i = Math.max(i, pendingIndex + 1); pendingIndex = -1; }
+      if (i >= Math.max(P.length, F.length)) restore();
       return v;
     }
     return R();
   }
 
   function fixedLog(...x) {
-    if (typeof x[0] == "string" && x[0].includes("[v0] Starting spin animation") && i < p.length) n = p[i++];
+    if (typeof x[0] == "string" && x[0].includes("[v0] Starting spin animation")) arm(last || "spin", "log");
     return L(...x);
   }
 
+  document.addEventListener("click", click, true);
+  document.addEventListener("pointerdown", pointerDown, true);
+  document.addEventListener("pointerup", pointerUp, true);
+  document.addEventListener("dragstart", pointerDown, true);
+  document.addEventListener("drop", pointerUp, true);
   Math.random = fixedRandom;
   console.log = fixedLog;
   L("[82-0 Solver] Fixed spins ready.");

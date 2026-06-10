@@ -14,6 +14,7 @@
   let requestId = 0;
   let pendingPlayerId = null;
   let pendingPlayerFromPosition = null;
+  let ignoreSlotClickUntil = 0;
   let trackingInstalled = false;
   let rollListenerInstalled = false;
   let lastConsoleRoll = null;
@@ -144,6 +145,8 @@
     document.addEventListener("click", trackGameClick, true);
     document.addEventListener("pointerdown", trackGamePointerDown, true);
     document.addEventListener("pointerup", trackGamePointerUp, true);
+    document.addEventListener("dragstart", trackGamePointerDown, true);
+    document.addEventListener("drop", trackGamePointerUp, true);
     trackingInstalled = true;
   }
 
@@ -272,8 +275,8 @@
     return !!document.querySelector(`#${overlayId} ${selector}`)?.checked;
   }
 
-  function pageTextLines() {
-    return document.body.innerText
+  function pageTextLines(text = document.body.innerText) {
+    return (text || "")
       .split(/\n+/)
       .map((line) => line.trim())
       .filter(Boolean);
@@ -298,6 +301,17 @@
     return !!playerIndex?.teams.includes(team);
   }
 
+  function nextMatchingLine(lines, start, matchLine) {
+    const end = Math.min(lines.length, start + 8);
+    for (let i = start; i < end; i += 1) {
+      const line = lines[i];
+      if (/^(SPIN|Roster|Switches)$/i.test(line)) break;
+      const match = matchLine(line);
+      if (match) return match;
+    }
+    return "";
+  }
+
   function parseCurrentRoll(text) {
     const match = text.match(/Pick from\s+([A-Z0-9]{2,4})\s*(?:·|\||-)?\s*(((?:19|20)\d0s)|(?:\d{2}['’]?s))/i);
     if (match) {
@@ -305,13 +319,28 @@
       if (era) return { team: match[1].toUpperCase(), era };
     }
 
-    const lines = pageTextLines();
+    const lines = pageTextLines(text);
     for (let i = 0; i < lines.length - 3; i += 1) {
       const team = lines[i].toUpperCase();
       const era = normalizeEraLabel(lines[i + 1]);
       if (isKnownTeam(team) && era && /^Team$/i.test(lines[i + 2]) && /^Era$/i.test(lines[i + 3])) {
         return { team, era };
       }
+    }
+
+    if (/Spin to roll a random team\s*\+\s*era/i.test(text) || /SPINNING/i.test(text)) return null;
+
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!/^TEAM$/i.test(lines[i])) continue;
+      const team = nextMatchingLine(lines, i + 1, (line) => {
+        const value = line.toUpperCase();
+        return isKnownTeam(value) ? value : "";
+      });
+      if (!team) continue;
+      const eraLabelIndex = lines.findIndex((line, index) => index > i && index < i + 8 && /^ERA$/i.test(line));
+      if (eraLabelIndex < 0) continue;
+      const era = nextMatchingLine(lines, eraLabelIndex + 1, normalizeEraLabel);
+      if (era) return { team, era };
     }
 
     return null;
@@ -405,38 +434,87 @@
     setTimeout(tick, 600);
   }
 
+  function buttonLooksUsed(button) {
+    const className = String(button.className || "");
+    const text = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""} ${button.innerText || button.textContent || ""}`;
+    const leftMatch = text.match(/\b(\d+)\s+left\b/i);
+    const visibleCountMatch = (button.innerText || button.textContent || "").match(/\b(\d+)\b/);
+    return !!(button.disabled ||
+      button.getAttribute("aria-disabled") === "true" ||
+      className.includes("cursor-not-allowed") ||
+      button.style.cursor === "not-allowed" ||
+      className.includes("line-through") ||
+      (leftMatch && Number(leftMatch[1]) <= 0) ||
+      (!leftMatch && visibleCountMatch && Number(visibleCountMatch[1]) <= 0));
+  }
+
   function switchButtonUsed(label) {
     const matching = [...document.querySelectorAll("button")]
       .filter((button) => !button.closest(`#${overlayId}`))
       .filter((button) => button.textContent.trim().toLowerCase() === label.toLowerCase());
     if (matching.length === 0) return null;
 
-    const states = matching.map((button) => {
-      const className = String(button.className || "");
-      return button.disabled ||
-        button.getAttribute("aria-disabled") === "true" ||
-        className.includes("cursor-not-allowed") ||
-        className.includes("line-through");
-    });
+    const states = matching.map(buttonLooksUsed);
     return states.every((state) => state === states[0]) ? states[0] : null;
   }
 
+  function respinButtonUsed(kind) {
+    const label = new RegExp(`^\\s*Respin\\s+${kind}\\b`, "i");
+    const matching = [...document.querySelectorAll("button")]
+      .filter((button) => !button.closest(`#${overlayId}`))
+      .filter((button) => label.test(controlLabel(button)));
+    if (matching.length === 0) return null;
+    return !matching.some((button) => !buttonLooksUsed(button));
+  }
+
   function parseSwitchState(text) {
+    const teamFromRespin = respinButtonUsed("team");
+    const eraFromRespin = respinButtonUsed("era");
     const teamFromButton = switchButtonUsed("Team");
     const eraFromButton = switchButtonUsed("Era");
-    const teamUsed = teamFromButton !== null
-      ? teamFromButton
-      : (/Team Switch\s+Used/i.test(text) || /Team\s+Used/i.test(text) ? true : null);
-    const eraUsed = eraFromButton !== null
-      ? eraFromButton
-      : (/Era Switch\s+Used/i.test(text) || /Era\s+Used/i.test(text) ? true : null);
+    let teamUsed = null;
+    let eraUsed = null;
+    if (teamFromRespin !== null) teamUsed = teamFromRespin;
+    else if (teamFromButton !== null) teamUsed = teamFromButton;
+    else if (/Team Switch\s+Used/i.test(text) || /Team\s+Used/i.test(text)) teamUsed = true;
+    if (eraFromRespin !== null) eraUsed = eraFromRespin;
+    else if (eraFromButton !== null) eraUsed = eraFromButton;
+    else if (/Era Switch\s+Used/i.test(text) || /Era\s+Used/i.test(text)) eraUsed = true;
     return { teamSwitchUsed: teamUsed, eraSwitchUsed: eraUsed };
+  }
+
+  function spinControlKind(button) {
+    if (!button) return "";
+    const label = controlLabel(button);
+    if (/^\s*Respin\s+team\b/i.test(label)) return "team";
+    if (/^\s*Respin\s+era\b/i.test(label)) return "era";
+    const text = button.textContent.trim();
+    if (/^SPIN$/i.test(text)) return "spin";
+    if (/^(Team|Era)$/i.test(text)) return text.toLowerCase();
+    return "";
+  }
+
+  function markSwitchUseFromSpinControl(kind) {
+    const teamInput = document.querySelector(`#${overlayId} [name=teamSwitchUsed]`);
+    const eraInput = document.querySelector(`#${overlayId} [name=eraSwitchUsed]`);
+    if (kind === "spin") {
+      if (teamInput) teamInput.checked = false;
+      if (eraInput) eraInput.checked = false;
+    } else if (kind === "team") {
+      if (teamInput) teamInput.checked = true;
+    } else if (kind === "era") {
+      if (eraInput) eraInput.checked = true;
+    }
+  }
+
+  function controlLabel(button) {
+    return `${button?.getAttribute?.("aria-label") || ""} ${button?.getAttribute?.("title") || ""} ${button?.innerText || button?.textContent || ""}`.trim();
   }
 
   function courtSlotButtons() {
     return [...document.querySelectorAll("button, [role=button]")]
       .filter((button) => !button.closest(`#${overlayId}`))
-      .filter(isCourtSlotButton);
+      .filter(isPositionSlotButton);
   }
 
   function isCourtSlotButton(button) {
@@ -446,8 +524,18 @@
     return button.getAttribute?.("role") === "button" && POSITIONS.some((pos) => aria.startsWith(pos));
   }
 
+  function isRosterSlotButton(button) {
+    if (!button || button.tagName !== "BUTTON") return false;
+    const className = String(button.className || "");
+    return className.includes("rounded-[12px]") && className.includes("flex-col") && className.includes("min-w-0");
+  }
+
+  function isPositionSlotButton(button) {
+    return isCourtSlotButton(button) || isRosterSlotButton(button);
+  }
+
   function isPositionChoiceButton(button) {
-    return button?.tagName === "BUTTON" && !button.disabled && !isCourtSlotButton(button) && !!slotPosition(button);
+    return button?.tagName === "BUTTON" && !button.disabled && !isPositionSlotButton(button) && !!exactSlotPosition(button);
   }
 
   function slotLines(button) {
@@ -457,10 +545,23 @@
       .filter(Boolean);
   }
 
+  function exactSlotPosition(button) {
+    return slotLines(button).find((line) => POSITIONS.includes(line)) || "";
+  }
+
+  function compactSlotText(button) {
+    return slotLines(button).join("").replace(/\s+/g, "").toUpperCase();
+  }
+
+  function compactSlotPosition(button) {
+    const text = compactSlotText(button);
+    return POSITIONS.find((pos) => text.endsWith(pos) && text.length > pos.length) || "";
+  }
+
   function slotPosition(button) {
     const aria = button.getAttribute?.("aria-label") || "";
     const ariaPos = POSITIONS.find((pos) => aria.startsWith(pos));
-    return ariaPos || slotLines(button).find((line) => POSITIONS.includes(line)) || "";
+    return ariaPos || exactSlotPosition(button) || (isPositionSlotButton(button) ? compactSlotPosition(button) : "");
   }
 
   function slotIsEmpty(button) {
@@ -468,13 +569,30 @@
     const aria = button.getAttribute?.("aria-label") || "";
     if (pos && aria.toLowerCase().includes(`${pos.toLowerCase()} empty`)) return true;
     const lines = slotLines(button);
-    return !!pos && lines.length > 0 && lines.every((line) => line === pos);
+    const compact = compactSlotText(button);
+    return !!pos && lines.length > 0 && (lines.every((line) => line === pos) || compact === pos || compact === `${pos}${pos}`);
   }
 
   function reconcileTrackedRosterWithSlots() {
+    const emptyPositions = [];
+    const unreadableFilledPositions = [];
     for (const button of courtSlotButtons()) {
       const pos = slotPosition(button);
-      if (pos && slotIsEmpty(button)) trackedRoster[pos] = null;
+      if (!pos) continue;
+      if (slotIsEmpty(button)) emptyPositions.push(pos);
+      else if (!trackedRoster[pos]) unreadableFilledPositions.push(pos);
+    }
+
+    const trackedOnEmptyPositions = emptyPositions.filter((pos) => trackedRoster[pos]);
+    if (trackedOnEmptyPositions.length === 1 && unreadableFilledPositions.length === 1) {
+      const source = trackedOnEmptyPositions[0];
+      const target = unreadableFilledPositions[0];
+      trackedRoster[target] = trackedRoster[source];
+      trackedRoster[source] = null;
+    }
+
+    for (const pos of emptyPositions) {
+      trackedRoster[pos] = null;
     }
   }
 
@@ -490,11 +608,13 @@
 
   function placePendingPlayer(position) {
     if (!position || !pendingPlayerId) return false;
+    const fromPosition = pendingPlayerFromPosition;
+    const replacedPlayerId = fromPosition && fromPosition !== position ? playerIdForPosition(position) : null;
     if (pendingPlayerFromPosition && pendingPlayerFromPosition !== position) {
-      trackedRoster[pendingPlayerFromPosition] = null;
+      trackedRoster[pendingPlayerFromPosition] = replacedPlayerId && replacedPlayerId !== pendingPlayerId ? replacedPlayerId : null;
     }
     for (const pos of POSITIONS) {
-      if (pos !== position && trackedRoster[pos] === pendingPlayerId) trackedRoster[pos] = null;
+      if (pos !== position && pos !== fromPosition && trackedRoster[pos] === pendingPlayerId) trackedRoster[pos] = null;
     }
     trackedRoster[position] = pendingPlayerId;
     clearPendingPlayer();
@@ -576,9 +696,18 @@
   }
 
   function placementTargetFromEvent(event) {
-    const direct = event.target.closest?.("button, [role=button]");
+    const direct = closestPlacementTarget(event.target);
     if (direct) return direct;
-    return document.elementFromPoint(event.clientX, event.clientY)?.closest?.("button, [role=button]") || null;
+    const pointed = typeof event.clientX === "number" && typeof event.clientY === "number"
+      ? document.elementFromPoint(event.clientX, event.clientY)
+      : null;
+    return closestPlacementTarget(pointed);
+  }
+
+  function closestPlacementTarget(node) {
+    return node?.closest?.("button, [role=button]") ||
+      node?.querySelector?.("button, [role=button]") ||
+      null;
   }
 
   function playerIdForPosition(pos) {
@@ -587,7 +716,7 @@
 
   function trackFilledSlotSelection(target) {
     const pos = slotPosition(target);
-    if (!pos || !isCourtSlotButton(target) || slotIsEmpty(target)) return false;
+    if (!pos || !isPositionSlotButton(target) || slotIsEmpty(target)) return false;
     const playerId = playerIdForPosition(pos);
     if (!playerId) return false;
     setPendingPlayer(playerId, pos);
@@ -596,6 +725,7 @@
 
   function trackGamePointerDown(event) {
     if (!players.length || event.target.closest?.(`#${overlayId}`)) return;
+    if (pendingPlayerId && event.type === "pointerdown") return;
     const target = placementTargetFromEvent(event);
     if (target) trackFilledSlotSelection(target);
   }
@@ -604,8 +734,8 @@
     if (!players.length || !pendingPlayerId || event.target.closest?.(`#${overlayId}`)) return;
     const target = placementTargetFromEvent(event);
     const pos = target ? slotPosition(target) : "";
-    if (pos && (isCourtSlotButton(target) || isPositionChoiceButton(target)) && (pos !== pendingPlayerFromPosition || slotIsEmpty(target))) {
-      placePendingPlayer(pos);
+    if (pos && (isPositionSlotButton(target) || isPositionChoiceButton(target)) && (pos !== pendingPlayerFromPosition || slotIsEmpty(target))) {
+      if (placePendingPlayer(pos) && event.type === "pointerup") ignoreSlotClickUntil = Date.now() + 250;
     }
   }
 
@@ -614,7 +744,8 @@
 
     const clickedButton = event.target.closest?.("button");
     const placementTarget = placementTargetFromEvent(event);
-    if (placementTarget && (isCourtSlotButton(placementTarget) || isPositionChoiceButton(placementTarget))) {
+    if (placementTarget && (isPositionSlotButton(placementTarget) || isPositionChoiceButton(placementTarget))) {
+      if (Date.now() < ignoreSlotClickUntil) return;
       const pos = slotPosition(placementTarget);
       if (pos && pendingPlayerId && (isPositionChoiceButton(placementTarget) || pos !== pendingPlayerFromPosition || slotIsEmpty(placementTarget))) {
         placePendingPlayer(pos);
@@ -623,12 +754,9 @@
       trackFilledSlotSelection(placementTarget);
       return;
     }
-    if (clickedButton && /^SPIN$/i.test(clickedButton.textContent.trim())) {
-      clearPendingPlayer();
-      pollForSpinResult();
-      return;
-    }
-    if (clickedButton && /^(Team|Era)$/i.test(clickedButton.textContent.trim())) {
+    const spinKind = spinControlKind(clickedButton);
+    if (spinKind) {
+      markSwitchUseFromSpinControl(spinKind);
       clearPendingPlayer();
       pollForSpinResult();
       return;
@@ -966,6 +1094,7 @@
     return {
       goal: "eightyTwoZero",
       value: entry.value,
+      bestAction: entry.action || null,
       bestActionLabel: entry.action?.label || "none",
       topActions: entry.topActions || [],
       statesVisited: 0,
@@ -1081,11 +1210,18 @@
       currentStandard: summary.currentStandard,
       goals: {}
     };
+    const precomputedGoals = {};
     if (solverOptions.options.objective === "standard" && isFirstPlayerState(state)) {
       const table = await loadPrecomputedOpenings();
       const precomputed = precomputedGoalResult(state, table);
-      if (precomputed) activeEvView.goals.eightyTwoZero = precomputed;
+      if (precomputed) {
+        activeEvView.goals.eightyTwoZero = precomputed;
+        precomputedGoals.eightyTwoZero = precomputed;
+      }
     }
+    const workerOptions = Object.keys(precomputedGoals).length
+      ? { ...solverOptions.options, precomputedGoals }
+      : solverOptions.options;
     const id = ++requestId;
     resetWorker();
     setSolvingEv(true);
@@ -1097,7 +1233,7 @@
         type: "SOLVE_EV",
         id,
         state,
-        options: solverOptions.options
+        options: workerOptions
       });
     } catch (error) {
       if (id !== requestId) return;
@@ -1212,7 +1348,12 @@
     if (button) button.textContent = minimized ? "+" : "-";
   }
 
-  function fixedSpinTargetValues() {
+  function fixedSpinTargetPairs() {
+    updateFixedSpinRollsFromInputs();
+    return fixedSpinRolls.map(([team, era]) => [team, shortEraLabel(normalizeEraLabel(era))]);
+  }
+
+  function fixedSpinTargetValues(rows = fixedSpinTargetPairs()) {
     const teamOrder = [];
     const erasByTeam = new Map();
     for (const player of players) {
@@ -1239,8 +1380,7 @@
       comboIndexes.set(`${team}|${era}`, index);
     });
 
-    updateFixedSpinRollsFromInputs();
-    return fixedSpinRolls.map(([team, selectedEra]) => {
+    return rows.map(([team, selectedEra]) => {
       const era = normalizeEraLabel(selectedEra);
       const index = comboIndexes.get(`${team}|${era}`);
       if (index === undefined) throw new Error(`Fixed spin target unavailable: ${team} ${shortEraLabel(era)}.`);
@@ -1251,9 +1391,11 @@
   async function fixSpins() {
     try {
       await loadPlayers();
+      const rolls = fixedSpinTargetPairs();
       const script = document.createElement("script");
       script.src = extensionUrl("fixed-spins.js");
-      script.dataset.targets = JSON.stringify(fixedSpinTargetValues());
+      script.dataset.rolls = JSON.stringify(rolls);
+      script.dataset.targets = JSON.stringify(fixedSpinTargetValues(rolls));
       script.onload = () => script.remove();
       script.onerror = () => {
         setStatus("fixed spins failed");

@@ -507,6 +507,9 @@
       timeLimitMs: normalizeLimitOption(rawOptions.timeLimitMs),
       threshold: EIGHTY_TWO_ZERO_TEAM_OVR
     };
+    const precomputedGoals = rawOptions.precomputedGoals && typeof rawOptions.precomputedGoals === "object"
+      ? rawOptions.precomputedGoals
+      : {};
     const adjusted = options.objective !== "standard";
     const onProgress = typeof rawOptions.onProgress === "function" ? rawOptions.onProgress : null;
     const startedAt = nowMs();
@@ -554,6 +557,43 @@
     const start = normalizeState(inputState);
     validateState(start);
     const startKey = keyFor(start);
+
+    function normalizePrecomputedGoal(goal) {
+      const raw = precomputedGoals[goal];
+      const value = Number(raw?.value);
+      if (!Number.isFinite(value)) return null;
+      const bestAction = raw.bestAction || raw.action || null;
+      const topActions = Array.isArray(raw.topActions)
+        ? raw.topActions.map((item) => {
+          const action = item.action || null;
+          return {
+            action,
+            value: Number.isFinite(Number(item.value)) ? Number(item.value) : value,
+            label: item.label || action?.label || actionLabel(action, ctx, adjusted)
+          };
+        })
+        : [];
+      return {
+        goal,
+        value,
+        bestAction,
+        bestActionLabel: raw.bestActionLabel || bestAction?.label || actionLabel(bestAction, ctx, adjusted),
+        topActions,
+        statesVisited: 0,
+        memoSize: 0,
+        truncated: false,
+        stateLimited: false,
+        timedOut: false,
+        candidateTruncated: false,
+        approximate: true,
+        heuristic: false,
+        greedy: false,
+        precomputed: true,
+        precomputeNote: raw.precomputeNote || "",
+        stuck: !bestAction,
+        stuckStates: bestAction ? 0 : 1
+      };
+    }
 
     function buildActionsForState(state, actionOptions = options) {
       const pickActions = buildPickActions(state, ctx, actionOptions, additionCache);
@@ -1360,14 +1400,17 @@
 
     let goals;
     const filled = rosterCount(start.roster);
+    const precomputedEightyTwoZero = !adjusted && filled === 0 && !start.teamSwitchUsed && !start.eraSwitchUsed
+      ? normalizePrecomputedGoal("eightyTwoZero")
+      : null;
     if (!adjusted && filled <= 2) {
       goals = {
-        eightyTwoZero: solveGreedyGoal("eightyTwoZero"),
+        eightyTwoZero: precomputedEightyTwoZero || solveGreedyGoal("eightyTwoZero"),
         maxScore: solveGreedyGoal("maxScore")
       };
     } else if (!adjusted) {
       if (onProgress) {
-        solveGreedyGoal("eightyTwoZero");
+        if (!precomputedEightyTwoZero) solveGreedyGoal("eightyTwoZero");
         solveGreedyGoal("maxScore");
       }
       goals = {
